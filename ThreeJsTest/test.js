@@ -218,6 +218,8 @@ class Player {
     }
 }
 
+
+// Initalize the scene and renderer
 const scene = new THREE.Scene();
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -225,197 +227,197 @@ document.body.appendChild(renderer.domElement);
 renderer.setClearColor(0x000000, 1);
 
 const player = new Player(scene);
+const noise2D = createNoise2D(); // Assuming you have a function to create noise2D
 
-const chunkSize = 100; // Define the size of each terrain chunk
-const numChunksInView = 3; // Number of chunks visible in each direction from the camera
-const loadDistance = chunkSize * numChunksInView;
+const chunkSize = 16; // The chunk size in world units
+const renderDistance = 2; // Number of chunks to render in each direction from the player
+const activeChunks = new Map(); // Map chunk coordinates (Vector2) to their corresponding THREE.Mesh objects
+const coordsToRemove = [];
 
-const loadedChunks = {};
-
-const noise2D = createNoise2D();
-
-// Function to check if a chunk already exists or needs to be generated
-function chunkExists(chunkX, chunkY) {
-    return loadedChunks[chunkX] && loadedChunks[chunkX][chunkY];
-}
-
-// Function to mark a chunk as loaded
-function markChunkLoaded(chunkX, chunkY) {
-    if (!loadedChunks[chunkX]) {
-        loadedChunks[chunkX] = {};
+const generateTerrainChunk = (chunkX, chunkZ) => {
+    // Create a plane geometry with the desired size
+    const planeGeometry = new THREE.PlaneGeometry(chunkSize, chunkSize,
+                                                  chunkSize - 1, chunkSize - 1);
+  
+    // Access the vertices array from the plane geometry
+    const vertices = planeGeometry.attributes.position.array;
+  
+    // Function to get noise value at given world coordinates
+    const getNoiseValue = (worldX, worldY) => {
+      return noise2D(worldX / 50, worldY / 50) * 10;
+    };
+  
+    // Generate vertices for the chunk
+    for (let z = 0; z < chunkSize; z++) {
+      for (let x = 0; x < chunkSize; x++) {
+        const worldX = chunkX * chunkSize + x;
+        const worldY = chunkZ * chunkSize + z;
+  
+        const xPos = worldX - (chunkSize / 2);
+        const yPos = worldY - (chunkSize / 2);
+  
+        // Calculate noise value for current position
+        const noiseZ = getNoiseValue(worldX, worldY);
+  
+        const vertexIndex = z * chunkSize + x; // Calculate vertex index
+        vertices[vertexIndex * 3] = xPos;
+        vertices[vertexIndex * 3 + 1] = yPos;
+        vertices[vertexIndex * 3 + 2] = noiseZ;
+      }
     }
-    loadedChunks[chunkX][chunkY] = true;
-}
 
-// Function to mark a chunk as unloaded
-function markChunkUnloaded(chunkX, chunkY) {
-    if (loadedChunks[chunkX]) {
-        delete loadedChunks[chunkX][chunkY];
+    // Generate colors for the vertices
+    const colorsArray = generateVertexColors(planeGeometry);
+
+    // Set vertex colors to the plane geometry
+    planeGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colorsArray, 3));
+
+    // Update the geometry to reflect changes in vertices and colors
+    planeGeometry.computeVertexNormals();
+    planeGeometry.computeBoundingSphere();
+
+    return planeGeometry;
+};
+
+  
+  
+
+
+const createChunk = (newChunkCoords) => {
+  const newChunkPos = new THREE.Vector2(newChunkCoords.x, newChunkCoords.y);
+  const terrain = generateTerrainChunk(newChunkPos.x, newChunkPos.y);
+
+  const material = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+  //const material = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true }); // Adjust material properties as needed
+  const terrainMesh = new THREE.Mesh(terrain, material);
+
+  terrainMesh.rotateX(Math.PI / 2); // Assuming terrain needs rotation
+
+  scene.add(terrainMesh);
+  activeChunks.set(newChunkCoords, terrainMesh);
+};
+
+const generateChunks = () => {
+  const playerChunkX = Math.floor(player.camera.position.x / chunkSize);
+  const playerChunkY = Math.floor(player.camera.position.z / chunkSize);
+
+  // Clear the removal dictionary
+  coordsToRemove.length = 0;
+
+  // Remove chunks outside of the render distance
+  for (const [chunkCoords, chunkMesh] of activeChunks.entries()) {
+    const distanceX = Math.abs(chunkCoords.x - playerChunkX);
+    const distanceY = Math.abs(chunkCoords.y - playerChunkY);
+    if (distanceX > renderDistance || distanceY > renderDistance) {
+      // Mark chunks outside of the render distance for removal
+      coordsToRemove.push(chunkCoords);
+      scene.remove(chunkMesh);
     }
-}
+  }
 
-// Function to remove chunks that are out of view
-function removeChunksOutOfView() {
-    const playerChunkX = Math.floor(player.camera.position.x / chunkSize);
-    const playerChunkY = Math.floor(player.camera.position.y / chunkSize);
+  // Remove chunks marked for removal
+  for (const chunkCoords of coordsToRemove) {
+    activeChunks.delete(chunkCoords);
+  }
 
-    for (const chunkX in loadedChunks) {
-        for (const chunkY in loadedChunks[chunkX]) {
-            if (
-                Math.abs(chunkX - playerChunkX) > numChunksInView || // Check X distance
-                Math.abs(chunkY - playerChunkY) > numChunksInView    // Check Y distance
-            ) {
-                // Remove the chunk from the scene and mark it as unloaded
-                console.log("Deleting chunk");
-                scene.remove(loadedChunks[chunkX][chunkY].terrainMesh);
-                markChunkUnloaded(chunkX, chunkY);
-            }
-        }
+  // Generate chunks within the render distance
+  for (let x = playerChunkX - renderDistance; x <= playerChunkX + renderDistance; x++) {
+    for (let y = playerChunkY - renderDistance; y <= playerChunkY + renderDistance; y++) {
+      const newChunkCoords = new THREE.Vector2(x * 0.9, y * 0.9);
+      if (!activeChunks.has(newChunkCoords)) {
+        createChunk(newChunkCoords);
+      }
     }
-}
+  }
+};
 
-// Function to interpolate color between two colors based on a value
-function interpolateColor(value, color1, color2) {
+
+// Intropolate colors based on the y value.
+// This eases the colors based on y height 
+const interpolateColor = (value, color1, color2) => {
     const thresholdY = 0;
     const t = (value - thresholdY) / (1 - thresholdY);
     return new THREE.Color().lerpColors(color1, color2, t);
 }
 
-// Function to generate terrain geometry for a given chunk
-// Function to generate terrain geometry for a given chunk
-function generateTerrainChunk(chunkX, chunkY) {
-    const vertices = [];
-    const indices = [];
+
+const generateVertexColors = (geometry) => {
     const thresholdY = 0;
 
     // Create an array to store the colors for different regions
     const colors = {
-        belowThreshold: new THREE.Color(0x8B4513), // Color for regions below the threshold
-        aboveThreshold: new THREE.Color(0x1E90FF)   // Default color for regions above the threshold
+        belowThreshold: new THREE.Color(0x8B4513),
+        aboveThreshold: new THREE.Color(0x1E90FF)
     };
-
-    for (let y = 0; y < chunkSize; y++) {
-        for (let x = 0; x < chunkSize; x++) {
-            const worldX = chunkX * chunkSize + x;
-            const worldY = chunkY * chunkSize + y;
-
-            const xPos = worldX - (chunkSize / 2);
-            const yPos = worldY - (chunkSize / 2);
-
-            // Apply simplex noise to the vertex position
-            const noiseValue = noise2D(xPos / 50, yPos / 50) * 5;
-            const amplitude = 1;
-            const noiseZ = noiseValue * amplitude;
-
-            vertices.push(xPos, yPos, noiseZ);
-        }
-    }
-
-    for (let y = 0; y < chunkSize - 1; y++) {
-        for (let x = 0; x < chunkSize - 1; x++) {
-            const a = x + chunkSize * y;
-            const b = x + chunkSize * (y + 1);
-            const c = (x + 1) + chunkSize * (y + 1);
-            const d = (x + 1) + chunkSize * y;
-
-            indices.push(a, b, d);
-            indices.push(b, c, d);
-        }
-    }
-
-    const geometry = new THREE.BufferGeometry();
-
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-
-    geometry.setIndex(indices);
 
     // Iterate through the vertices of the plane geometry
     const positions = geometry.attributes.position;
     const numVertices = positions.count;
     const colorsArray = [];
-    for (let i = 0; i < numVertices; i++) {
+
+    for(let vertexIndex = 0; vertexIndex < numVertices; vertexIndex++) {
+        
         // Get the Z coordinate of the current vertex
-        const vertexZ = positions.getZ(i);
+        const vertexZ = positions.getZ(vertexIndex);
 
         // Determine the color for the vertex based on its Z value and neighboring vertices
         let color;
-        if (vertexZ < thresholdY) {
+        if(vertexZ < thresholdY) {
             // Color for regions below the threshold
             color = colors.belowThreshold;
-        } else {
+        } 
+        else {
             // Color for regions above the threshold
             const neighborZ = [];
+            
             // Get Z coordinate of neighboring vertices
-            const xIndex = i % chunkSize;
-            const yIndex = Math.floor(i / chunkSize);
-            for (let xOffset = -1; xOffset <= 1; xOffset++) {
-                for (let yOffset = -1; yOffset <= 1; yOffset++) {
-                    const neighborIndex = (yIndex + yOffset) * chunkSize + (xIndex + xOffset);
-                    if (neighborIndex >= 0 && neighborIndex < numVertices) {
+            const xIndex = vertexIndex % chunkSize;
+            const yIndex = Math.floor(vertexIndex / chunkSize);
+
+            // Loop
+            for(let xOffset = -1; xOffset <= 1; xOffset++) {
+                for(let yOffset = -1; yOffset <= 1; yOffset++) {
+                    const neighborIndex = (yIndex + yOffset) * chunkSize +
+                                                             (xIndex + xOffset);
+                    
+                    // Check the neighboring index
+                    if(neighborIndex >= 0 && neighborIndex < numVertices) {
                         neighborZ.push(positions.getZ(neighborIndex));
                     }
                 }
             }
+
             // Interpolate colors based on the height values of neighboring vertices
-            const totalZ = neighborZ.reduce((acc, val) => acc + val, 0) + vertexZ;
+            const totalZ = neighborZ.reduce((acc, val) => acc + val, 0)
+                                                                      + vertexZ;
+            
+            // Get the average z value 
             const avgZ = totalZ / (neighborZ.length + 1);
-            color = interpolateColor(avgZ, colors.belowThreshold, colors.aboveThreshold);
+            
+            // Get the height based color based on neighboring values 
+            color = interpolateColor(avgZ, colors.belowThreshold, 
+                                                         colors.aboveThreshold);
         }
 
         // Add the color to the colors array
         colorsArray.push(color.r, color.g, color.b);
     }
-
-    // Create a buffer attribute for vertex colors
-    const colorsAttribute = new THREE.BufferAttribute(new Float32Array(colorsArray), 3);
-
-    // Set the colors attribute to the plane geometry
-    geometry.setAttribute('color', colorsAttribute);
-
-    return geometry;
+    return colorsArray;  
 }
 
-// Function to generate terrain chunks around the player
-function generateTerrainChunks() {
-    const playerChunkX = Math.floor(player.camera.position.x / chunkSize);
-    const playerChunkY = Math.floor(player.camera.position.y / chunkSize);
-
-    for (let x = playerChunkX - numChunksInView; x <= playerChunkX + numChunksInView; x++) {
-        for (let y = playerChunkY - numChunksInView; y <= playerChunkY + numChunksInView; y++) {
-            if (!chunkExists(x, y)) { // Check if chunk already exists or needs to be generated
-                const terrainGeometry = generateTerrainChunk(x, y);
-                const material = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true });
-
-                // Calculate the world position of the chunk
-                const chunkWorldPosX = x / chunkSize;
-                const chunkWorldPosY = y / chunkSize;
-
-                const terrainMesh = new THREE.Mesh(terrainGeometry, material);
-                
-                // Set the position of the chunk
-                terrainMesh.position.set(chunkWorldPosX, 0, chunkWorldPosY);
-                
-                // Rotate the chunk to align with the terrain
-                terrainMesh.rotateX(Math.PI / 2);
-                
-                scene.add(terrainMesh);
-                markChunkLoaded(x, y); // Mark the chunk as loaded
-            }
-        }
+for(let x = -2; x < 2; x++) {
+    for(let y = -2; y < 2; y++ ) {
+        createChunk(new THREE.Vector2(x * 0.9,y * 0.9));
     }
-    
-    // Remove distant chunks
-    removeChunksOutOfView();
 }
 
 
 let clock = new THREE.Clock();
-
 function animate() {
     requestAnimationFrame(animate);
     let delta = clock.getDelta(); // Get the time elapsed since the last frame
     player.update(delta,scene); // Pass delta to the update method
-    generateTerrainChunks();
+    generateChunks();
     renderer.render(scene, player.camera);
 }
 
