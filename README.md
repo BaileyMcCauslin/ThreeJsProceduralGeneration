@@ -8,7 +8,13 @@
 
 * To create seemingly endless terrain, we employ a chunk-based approach. This involves breaking the terrain generation into smaller chunks that can be loaded and unloaded based on the camera's position, thus conserving memory resources.
 
-## TODO'S
+# Video
+Check out the video of the project [Here](https://youtu.be/pgF-DRnrvd8)! I aplogize that OBS cut off a quarter of the screen but you get the idea. Also at 0:58 you can see me zoom in on a chunk boundry and the stitching is a bit off. It's a goal of mine to fix this at somepoint by computing the chunk ratio instead of a hard-coded value.
+
+# Run it yourself
+I used vite but im sure you can run it how you prefer. Assuming you use node js. 
+
+# TODO'S
 
 ### Improve Chunk Mesh Stitching
 Currently, we use a hardcoded ratio to stitch different terrain chunks together. However, this approach may result in tiny gaps or overlaps, affecting the colors of neighboring vertices. We need to find a way to compute this ratio dynamically to achieve perfect or near-perfect stitching.
